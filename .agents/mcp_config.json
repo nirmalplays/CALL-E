@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "call-e": {
+      "serverUrl": "https://seleven-mcp-sg.airudder.com/mcp/openagent_oauth"
+    }
+  }
+}
