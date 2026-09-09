@@ -33,6 +33,7 @@ from medai_readback.calle import CalleService
 from medai_readback.confirmations import CONFIRMATIONS_COLLECTION, create_pending_confirmation
 from medai_readback.dashboard import render_dashboard
 from medai_readback.locale_support import resolve_locale, supported_locales
+from medai_readback.provider import get_provider
 from medai_readback.readback import READBACK_RESULT_SCHEMA, build_readback_task
 from medai_readback.store import InMemoryDB
 from medai_readback.webhooks import router as calle_router
@@ -115,7 +116,7 @@ async def place_readback_call(body: ReadbackCallRequest):
         enrollment_days=30,
     )
 
-    service = await CalleService.get_instance()
+    service = await get_provider()
     result = await service.call(
         to_number=body.phone,
         task=task,
