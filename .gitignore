@@ -16,3 +16,6 @@ __pycache__/
 call-e-integrations/
 prd_text.txt
 calle-hackathon-prd.pdf
+
+# venv
+.venv/
