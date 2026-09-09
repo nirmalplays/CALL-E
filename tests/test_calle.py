@@ -23,8 +23,12 @@ async def test_call_posts_recipients_as_array_with_metadata(monkeypatch):
     svc = CalleService()
     session = MagicMock()
     session.closed = False
+    # 201 + "id" is what the live API actually returns (confirmed against a
+    # real call, 2026-09-09) — not the 200 + "call_id" this mock used to
+    # assert, which meant every real call placement raised instead of
+    # returning.
     session.post = MagicMock(
-        return_value=_mock_response(200, {"call_id": "call_abc123", "status": "queued"})
+        return_value=_mock_response(201, {"id": "call_abc123", "status": "queued"})
     )
     svc._session = session
 
@@ -54,7 +58,7 @@ async def test_call_includes_webhook_url_when_given(monkeypatch):
     session = MagicMock()
     session.closed = False
     session.post = MagicMock(
-        return_value=_mock_response(200, {"call_id": "c1", "status": "queued"})
+        return_value=_mock_response(201, {"id": "c1", "status": "queued"})
     )
     svc._session = session
 
@@ -71,7 +75,25 @@ async def test_call_includes_webhook_url_when_given(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_raises_on_non_200(monkeypatch):
+async def test_call_accepts_200_too(monkeypatch):
+    """Not observed from the live API, but accept it defensively in case a
+    future version of the API (or a different environment) returns 200
+    instead of 201 for the same create-call action."""
+    monkeypatch.setenv("CALLE_API_KEY", "calle_test_key")
+    svc = CalleService()
+    session = MagicMock()
+    session.closed = False
+    session.post = MagicMock(return_value=_mock_response(200, {"id": "c1", "status": "queued"}))
+    svc._session = session
+
+    result = await svc.call(
+        to_number="+919876543210", task="t", result_schema={}, metadata={"call_id": "x"},
+    )
+    assert result["call_sid"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_call_raises_on_error_status(monkeypatch):
     monkeypatch.setenv("CALLE_API_KEY", "calle_test_key")
     svc = CalleService()
     session = MagicMock()
@@ -86,6 +108,24 @@ async def test_call_raises_on_non_200(monkeypatch):
             result_schema={},
             metadata={"call_id": "x"},
         )
+
+
+@pytest.mark.asyncio
+async def test_call_id_missing_from_response_falls_back_to_unknown_not_a_crash(monkeypatch):
+    """If the response shape changes again, this should degrade to a
+    traceable 'unknown' id rather than raising — a KeyError here would be
+    worse than a call we can't correlate."""
+    monkeypatch.setenv("CALLE_API_KEY", "calle_test_key")
+    svc = CalleService()
+    session = MagicMock()
+    session.closed = False
+    session.post = MagicMock(return_value=_mock_response(201, {"status": "queued"}))
+    svc._session = session
+
+    result = await svc.call(
+        to_number="+919876543210", task="t", result_schema={}, metadata={"call_id": "x"},
+    )
+    assert result["call_sid"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -150,7 +190,7 @@ async def test_call_locale_and_region_override_env_defaults(monkeypatch):
     session = MagicMock()
     session.closed = False
     session.post = MagicMock(
-        return_value=_mock_response(200, {"call_id": "c1", "status": "queued"})
+        return_value=_mock_response(201, {"id": "c1", "status": "queued"})
     )
     svc._session = session
 

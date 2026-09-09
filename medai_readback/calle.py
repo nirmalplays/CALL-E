@@ -128,12 +128,21 @@ class CalleService:
 
         url = f"{_CALLE_BASE_URL()}/v1/calls"
         async with self._session.post(url, json=payload, headers=headers) as resp:
-            if resp.status != 200:
+            # POST /v1/calls is a create endpoint — CALL-E returns 201, not
+            # 200. Confirmed against the live API (verified 2026-09-09):
+            # treating 201 as an error meant every successful call placement
+            # was reported as a crash.
+            if resp.status not in (200, 201):
                 error = await resp.text()
                 raise Exception(f"CALL-E API error ({resp.status}): {error}")
             body = await resp.json()
 
-        call_sid = body.get("call_id", "unknown")
+        # The live API returns the call's id as "id", not "call_id" — same
+        # field GET /v1/calls/{id} echoes back. Confirmed against a real
+        # call (call_Ljdf6v_p6TrKK3YAoniMEg); "call_id" doesn't exist on the
+        # response at all, so this previously always fell through to
+        # "unknown" and silently broke correlation.
+        call_sid = body.get("id", "unknown")
         logger.info(f"CALL-E call initiated: id={call_sid}, to={to_number}")
         return {"status": "call_initiated", "call_sid": call_sid}
 
