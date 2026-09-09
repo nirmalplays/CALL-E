@@ -24,12 +24,14 @@ import os
 import env_config  # noqa: F401 — side effect: loads .env into os.environ before CalleService reads it
 
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from loguru import logger
 
 from medai_readback.calle import CalleService
 from medai_readback.confirmations import CONFIRMATIONS_COLLECTION, create_pending_confirmation
+from medai_readback.dashboard import render_dashboard
 from medai_readback.locale_support import resolve_locale, supported_locales
 from medai_readback.readback import READBACK_RESULT_SCHEMA, build_readback_task
 from medai_readback.store import InMemoryDB
@@ -67,6 +69,14 @@ async def list_confirmations():
     """Everything recorded so far — the correction review queue for the demo."""
     col = db.get_collection(CONFIRMATIONS_COLLECTION)
     return await col.find_all()
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """PRD G2 — the correction-review surface staff actually look at,
+    grouped so anything needing a decision (review, fallback) sorts first."""
+    col = db.get_collection(CONFIRMATIONS_COLLECTION)
+    return render_dashboard(await col.find_all())
 
 
 @app.post("/demo/readback-call")
