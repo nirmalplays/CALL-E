@@ -136,3 +136,34 @@ async def test_get_call_details_marks_in_progress_active(monkeypatch):
 
 def test_terminal_statuses_match_calle_spec():
     assert _TERMINAL_STATUSES == frozenset(["completed", "failed", "canceled"])
+
+
+@pytest.mark.asyncio
+async def test_call_locale_and_region_override_env_defaults(monkeypatch):
+    """PRD A3: the caller resolves the patient's language_preference and must
+    be able to place that specific call in it, not whatever CALLE_LOCALE the
+    process happens to be configured with."""
+    monkeypatch.setenv("CALLE_API_KEY", "calle_test_key")
+    monkeypatch.setenv("CALLE_REGION", "IN")
+    monkeypatch.setenv("CALLE_LOCALE", "en-IN")
+    svc = CalleService()
+    session = MagicMock()
+    session.closed = False
+    session.post = MagicMock(
+        return_value=_mock_response(200, {"call_id": "c1", "status": "queued"})
+    )
+    svc._session = session
+
+    await svc.call(
+        to_number="+919876543210",
+        task="t",
+        result_schema={},
+        metadata={"call_id": "x"},
+        region="IN",
+        locale="hi-IN",
+    )
+
+    _, kwargs = session.post.call_args
+    recipient = kwargs["json"]["recipients"][0]
+    assert recipient["locale"] == "hi-IN"
+    assert recipient["region"] == "IN"

@@ -39,10 +39,10 @@ def preview(scan_id: str) -> None:
     print(json.dumps({"result_schema": READBACK_RESULT_SCHEMA}, indent=2))
 
 
-def place_call(scan_id: str, phone: str, server_url: str) -> None:
+def place_call(scan_id: str, phone: str, language: str, server_url: str) -> None:
     resp = httpx.post(
         f"{server_url}/demo/readback-call",
-        json={"scan_id": scan_id, "phone": phone},
+        json={"scan_id": scan_id, "phone": phone, "language_preference": language},
         timeout=30,
     )
     resp.raise_for_status()
@@ -50,6 +50,11 @@ def place_call(scan_id: str, phone: str, server_url: str) -> None:
     if "error" in body:
         print(f"[ERROR] {body['error']}. Known scan ids: {body.get('known_scan_ids')}")
         sys.exit(1)
+    if "fallback" in body:
+        print(f"[FALLBACK] {body['language_preference']} is not a supported locale yet.")
+        print(f"           Supported: {body['supported_locales']}")
+        print("           No call was placed — this would route to dashboard staff review.")
+        return
 
     print(f"[CALL PLACED] call_id={body['call_id']}  calle={body['calle']}")
     print("Your phone should ring shortly. Watch the confirmation land at:")
@@ -65,6 +70,7 @@ def main() -> None:
         help=f"one of: {', '.join(available_scan_ids())}",
     )
     parser.add_argument("--phone", default=None, help="E.164 number; defaults to TEST_PHONE")
+    parser.add_argument("--language", default="en-IN", help="patient's language_preference, e.g. en-IN, hi-IN")
     parser.add_argument("--dry-run", action="store_true", help="print the task locally, place no call")
     parser.add_argument("--server-url", default="http://127.0.0.1:8000", help="running app.py address")
     args = parser.parse_args()
@@ -74,7 +80,7 @@ def main() -> None:
         return
 
     phone = cfg.require("TEST_PHONE", args.phone or cfg.TEST_PHONE)
-    place_call(args.scan_id, phone, args.server_url)
+    place_call(args.scan_id, phone, args.language, args.server_url)
 
 
 if __name__ == "__main__":

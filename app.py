@@ -26,8 +26,11 @@ import env_config  # noqa: F401 — side effect: loads .env into os.environ befo
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from loguru import logger
+
 from medai_readback.calle import CalleService
 from medai_readback.confirmations import CONFIRMATIONS_COLLECTION, create_pending_confirmation
+from medai_readback.locale_support import resolve_locale, supported_locales
 from medai_readback.readback import READBACK_RESULT_SCHEMA, build_readback_task
 from medai_readback.store import InMemoryDB
 from medai_readback.webhooks import router as calle_router
@@ -46,6 +49,7 @@ set_db(db)
 class ReadbackCallRequest(BaseModel):
     scan_id: str
     phone: str
+    language_preference: str = "en-IN"
 
 
 @app.get("/health")
@@ -74,6 +78,21 @@ async def place_readback_call(body: ReadbackCallRequest):
     except KeyError as exc:
         return {"error": str(exc), "known_scan_ids": available_scan_ids()}
 
+    # PRD A3: never place a call in a language the patient didn't choose.
+    # Unsupported (or not yet verified) -> fall back to dashboard staff
+    # review instead of guessing a substitute language.
+    locale = resolve_locale(body.language_preference)
+    if locale is None:
+        logger.warning(
+            "Readback call for scan_id={} skipped — unsupported language_preference={}",
+            body.scan_id, body.language_preference,
+        )
+        return {
+            "fallback": "unsupported_language",
+            "language_preference": body.language_preference,
+            "supported_locales": sorted(supported_locales()),
+        }
+
     task = build_readback_task(scan["patient_name"], scan["medications"])
     call_id = await create_pending_confirmation(
         db,
@@ -93,6 +112,7 @@ async def place_readback_call(body: ReadbackCallRequest):
         result_schema=READBACK_RESULT_SCHEMA,
         metadata={"call_id": call_id, "patient_id": body.scan_id},
         webhook_url=os.getenv("CALLE_WEBHOOK_URL") or None,
+        locale=locale,
     )
 
     return {"call_id": call_id, "calle": result}

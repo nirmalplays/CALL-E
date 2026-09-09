@@ -75,6 +75,8 @@ class CalleService:
         result_schema: dict,
         metadata: dict,
         webhook_url: Optional[str] = None,
+        region: Optional[str] = None,
+        locale: Optional[str] = None,
     ) -> dict:
         """
         Place an outbound call via CALL-E's Create Call API.
@@ -86,6 +88,12 @@ class CalleService:
             metadata:      Correlation data echoed back on the webhook.
                            MUST contain "call_id".
             webhook_url:   Optional HTTPS URL for terminal call events.
+            region:        Overrides CALLE_REGION for this call.
+            locale:        Overrides CALLE_LOCALE for this call — callers that
+                            place calls in a patient's language_preference
+                            (PRD A3) should resolve it against CALL-E's
+                            supported locales first and pass the result here,
+                            rather than relying on the process-wide default.
 
         Returns:
             {"status": "call_initiated", "call_sid": "<calle call_id>"}
@@ -98,8 +106,8 @@ class CalleService:
             "recipients": [
                 {
                     "phones": [to_number],
-                    "region": _CALLE_REGION(),
-                    "locale": _CALLE_LOCALE(),
+                    "region": region or _CALLE_REGION(),
+                    "locale": locale or _CALLE_LOCALE(),
                 }
             ],
             "result_schema": result_schema,
