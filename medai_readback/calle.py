@@ -49,7 +49,17 @@ class CalleService:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=30),
-                connector=aiohttp.TCPConnector(limit=20, limit_per_host=10),
+                connector=aiohttp.TCPConnector(
+                    limit=20,
+                    limit_per_host=10,
+                    # aiohttp defaults to aiodns (pycares) for DNS when it's
+                    # installed. On Windows, pycares frequently fails to pick
+                    # up the system's configured DNS servers ("Could not
+                    # contact DNS servers") even though the OS resolver
+                    # works fine — ThreadedResolver uses socket.getaddrinfo,
+                    # the same resolver curl/nslookup use, sidestepping that.
+                    resolver=aiohttp.resolver.ThreadedResolver(),
+                ),
             )
             logger.info("CalleService session initialized")
 
