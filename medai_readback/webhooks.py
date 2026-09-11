@@ -62,7 +62,7 @@ async def handle_event(db, event_id: str, payload: Dict[str, Any]) -> Dict[str, 
         }
     )
 
-    structured = payload.get("structured_result") or {}
+    structured = (payload.get("structured_result") or {}) if event_type == "call.completed" else {}
     transcript = payload.get("transcript") or []
     disposition = await resolve_confirmation(db, call_id, structured, transcript)
 

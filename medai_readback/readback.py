@@ -50,12 +50,11 @@ def format_medication_line(index: int, med: Dict[str, Any]) -> str:
     if dosage:
         parts.append(dosage)
 
-    tablets = f"{quantity} tablet" if quantity == "1" else f"{quantity} tablets"
     schedule = _schedule_phrase(med.get("schedule", []))
     if quantity:
-        parts.append(f"take {tablets} in the {schedule}")
+        parts.append(f"quantity {quantity}; timing {schedule}")
     else:
-        parts.append(f"take in the {schedule}")
+        parts.append(f"timing {schedule}")
 
     if duration:
         parts.append(f"for {duration}")
@@ -101,7 +100,7 @@ Then read back EACH medication ONE BY ONE. After each one, ask "Is this correct,
 {readback_text}
 
 After all medications have been reviewed:
-- If everything was confirmed: "Thank you for confirming. We will set up your medication reminders now. Have a good day!"
+- If everything was confirmed: "Thank you for confirming. Your confirmation has been recorded for the care team. Have a good day!"
 - If anything was corrected: "Thank you, I have noted that. Our team will review your corrections before updating your records — nothing changes without staff verification. Have a good day!"
 
 Record for each medication whether the patient confirmed it, corrected it, or was unsure, and capture any correction in the patient's own words.

@@ -36,7 +36,7 @@ def main() -> None:
         "medications": [{"name_as_read": "Metformin", "status": "confirmed"}],
     }
     print(f"\nSimulated result: {fake_result}")
-    print(f"Disposition: {decide(fake_result)}")
+    print(f"Disposition: {decide(fake_result, MEDICATIONS)}")
 
 
 if __name__ == "__main__":

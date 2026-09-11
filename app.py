@@ -24,7 +24,7 @@ import os
 import env_config  # noqa: F401 — side effect: loads .env into os.environ before CalleService reads it
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from loguru import logger
@@ -40,7 +40,31 @@ from medai_readback.webhooks import router as calle_router
 from medai_readback.webhooks import set_db
 from ocr.main import available_scan_ids, extract_prescription
 
-app = FastAPI(title="MedAI CALL-E readback demo")
+from medai_readback.local_api import router as local_router
+from medai_readback.workflow import WorkflowError
+
+app = FastAPI(title="MedAI prescription confirmation")
+from medai_readback.security import RequestProtection
+app.add_middleware(RequestProtection)
+app.include_router(local_router)
+from medai_readback.ocr_api import router as ocr_router
+app.include_router(ocr_router)
+
+@app.exception_handler(WorkflowError)
+async def workflow_error(request, exc):
+    return JSONResponse(status_code=exc.status, content={"detail": str(exc)})
+
+@app.middleware("http")
+async def isolate_legacy_demo(request, call_next):
+    if request.url.path.startswith("/demo/") or request.url.path in ("/dashboard", "/calle/webhook"):
+        if os.getenv("MEDAI_ENABLE_LEGACY_DEMO") != "true":
+            return JSONResponse(status_code=404, content={"detail": "Legacy fixture endpoints disabled; use /local/dashboard"})
+        if request.url.path == "/demo/readback-call" and os.getenv("MEDAI_OFFLINE_TEST") != "true":
+            return JSONResponse(status_code=403, content={"detail": "Legacy fixture calling is offline-test only"})
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 app.include_router(calle_router)
 
 # Shared by every route below — swap for a real Motor client in production,

@@ -108,7 +108,12 @@ class CalleService:
         Returns:
             {"status": "call_initiated", "call_sid": "<calle call_id>"}
         """
+        if os.getenv("CALLE_ENABLE_LIVE_CALLS") != "true":
+            raise ValueError("Live calls disabled; explicit enablement required")
         headers = self._headers()
+        if not isinstance(metadata.get("call_id"), str) or not metadata["call_id"]:
+            raise ValueError("metadata.call_id is required")
+        headers["Idempotency-Key"] = metadata["call_id"]
         await self._ensure_session()
 
         payload = {
@@ -142,8 +147,10 @@ class CalleService:
         # call (call_Ljdf6v_p6TrKK3YAoniMEg); "call_id" doesn't exist on the
         # response at all, so this previously always fell through to
         # "unknown" and silently broke correlation.
-        call_sid = body.get("id", "unknown")
-        logger.info(f"CALL-E call initiated: id={call_sid}, to={to_number}")
+        call_sid = body.get("id")
+        if not isinstance(call_sid, str) or not call_sid:
+            raise RuntimeError("CALL-E accepted request without a call ID; reconcile before retrying")
+        logger.info("CALL-E call initiated: id={}", call_sid)
         return {"status": "call_initiated", "call_sid": call_sid}
 
     async def get_call_details(self, call_sid: str) -> dict:

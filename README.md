@@ -1,119 +1,78 @@
-# MedAI × CALL-E — voice prescription readback
+# MedAI × CALL-E
 
-**Hackathon:** CALL-E: Your Code Is Calling (Devpost) · **Deadline:** 14 Sep 2026, 21:15 IST
+Prescription uploads, local OCR, staff review, and budget-controlled CALL-E prescription confirmation and reminder workflows.
 
-MedAI scans handwritten prescriptions via OCR and places scheduled
-adherence calls through Exotel. In Indian outpatient care, handwriting is
-often the only thing a patient takes home — and nothing today checks OCR's
-extraction against what the doctor actually said before it drives
-reminders. This project adds that check: after a scan, CALL-E reads the
-extracted regimen back to the patient and captures a structured,
-per-medication confirmation before anything is scheduled. It also ports
-MedAI's adherence and escalation calls onto CALL-E as a second telephony
-provider.
+**Status:** functioning local application with real image/PDF extraction and persistent records. Live CALL-E delivery is not yet verified: the authorized connection test failed with provider code `404`. Calls are disabled by default. This is a hackathon application, not a clinically validated medical system.
 
-Full requirements: see the PRD (`extract_prd.py` pulled its text out of the
-original PDF into this repo's early exploration — the source PRD isn't
-otherwise included here).
+## Run locally
 
-## What's built
+Use Python 3.14. In a virtual environment:
 
-| Goal | Status |
-|---|---|
-| **G1** Readback call, per-medication, structured outcome | Done — `medai_readback/readback.py`, `ocr/main.py` (fixture-backed), wired end to end in `app.py` |
-| **G2** Corrections routed to a human, never silently applied | Done — `medai_readback/confirmations.py`'s `decide()`, surfaced at `/dashboard` |
-| **G3** CALL-E as a config-selectable provider alongside Exotel | Scaffolded — `medai_readback/provider.py` selects by config; the Exotel side is a deliberate stub (see Known gaps) |
-| **G4** Extracted, standalone community contribution | Done — `skills/prescription-readback/`, matches `CALLE-AI/awesome-phone-call-agents`'s own template |
-| **A3** Never place a call in an unverified language | Done — `medai_readback/locale_support.py` defaults to `en-IN` only until the real API is tested |
-| Adherence + escalation call taxonomy | Ported — `medai_readback/adherence.py`, `medai_readback/escalation.py` |
-
-98 tests passing (`tests/`), plus 19 more inside the standalone community
-package (`skills/prescription-readback/scripts/`, run independently — see
-its own `SKILL.md`).
-
-## Relationship to the MedAI platform
-
-**This repo does not contain the MedAI platform.** The PRD describes this
-project as new work layered onto an existing multi-tenant platform
-(`tenori-labs/medai-multitenant`) — its OCR service, patient/prescription
-records, scheduler, dashboard, consent gating, and Exotel telephony. None
-of that lives here; this repo is the CALL-E integration layer, built and
-tested standalone with an in-memory store and fixture OCR data.
-
-Before the Devpost submission, the team needs to either (a) merge this
-into `medai-multitenant` and wire it to the real OCR service and database,
-or (b) be explicit in the submission that this repo is the new,
-free-standing layer and the platform underneath is a separate, pre-
-existing codebase. Don't let the submission read as if this repo alone
-were pre-existing — it isn't; every file here was written during the
-hackathon.
-
-## Setup
-
-```
-pip install -r requirements.txt
-cp .env.example .env   # fill in CALLE_API_KEY and TEST_PHONE
+```text
+python -m pip install -r requirements.txt -r requirements-ocr.txt
 ```
 
-## Running the tests
+Copy `.env.example` to `.env`. Generate a staff access token with:
 
-```
-python -m pytest tests/ -q
-```
-
-## Running the demo
-
-```
-uvicorn app:app --reload
-python demo_call.py demo-clean --dry-run
+```text
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-See `DEMO.md` for the full recording runbook (beats, commands, what to
-say when).
+Set `MEDAI_STAFF_TOKEN` to that token. Keep `CALLE_ENABLE_LIVE_CALLS=false` and `CALLE_CALL_BUDGET=0`. No provider key is needed for local OCR, review, storage, or offline verification.
 
-## Structure
-
-```
-app.py                    FastAPI entrypoint — webhook receiver, demo endpoints, dashboard
-demo_call.py               CLI: preview a task locally, or place a real call
-medai_readback/
-  readback.py               Readback task prompt + result schema (PRD A1-A6)
-  confirmations.py          Pending-confirmation store + outcome routing (PRD S3, S4)
-  webhooks.py                CALL-E webhook receiver, deduped, no polling (PRD B3)
-  calle.py                   CALL-E API adapter (PRD B1, B2, B5)
-  provider.py                 Config-selectable provider — CALL-E live, Exotel stubbed (PRD G3)
-  locale_support.py           Never guess a language (PRD A3)
-  adherence.py, escalation.py Ported call taxonomies (Workstream B)
-  dashboard.py                 Correction-review HTML surface (PRD G2)
-  store.py                     In-memory Motor/PyMongo stand-in for the demo
-ocr/main.py                Fixture-backed OCR extraction (PRD section 11 mitigation)
-skills/prescription-readback/  Standalone community package (PRD G4)
-tests/                     41 original + 57 added this session
-test_readback_call.py, test_readback_api.py, src/  Early SDK exploration —
-  superseded by app.py + demo_call.py, kept for reference
+```text
+python -m uvicorn app:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-## Safety rules (PRD section 7 — non-negotiable)
+Open `http://127.0.0.1:8000/local/dashboard` and unlock with the staff token. The token stays in browser memory; reload or lock requires authentication again.
 
-- Identity confirmed before any medication name is spoken.
-- Nothing on voicemail beyond a callback request.
-- Nothing schedules on any outcome but a reached, fully-confirmed call.
-- Corrections are captured verbatim and handed to a human — never
-  auto-applied.
-- A language without a verified support test never gets a call.
+## Actual workflow
 
-## Known gaps
+1. Add or select a patient and record their consent and preferred language.
+2. Upload PNG, JPEG, WebP or PDF. OCR runs locally, without sending documents to an external API.
+3. Load editable draft medicine fields derived from the recognized text. Missing fields stay blank. Compare every value with the original; handwriting accuracy is not validated.
+4. Save reviewed medication data. Original files and extracted text remain available through authenticated saved-scan endpoints. No fixture substitutes for an uploaded file.
+5. Preview the confirmation call. Live dispatch requires explicit configuration, an allowed number, verified locale, HTTPS callback and remaining local budget.
+6. Call corrections go to staff review. Approved regimens can receive explicitly scheduled reminder jobs. Creating a schedule does not place a call; the worker must be explicitly enabled.
 
-- **CALL-E's actual language support hasn't been tested against the live
-  API.** This was the PRD's own Day-1 gating risk. `locale_support.py`
-  defaults to `en-IN` only until someone runs that test — do it before
-  recording anything in another language.
-- **Exotel is a stub**, not a real integration (`provider.py`'s
-  `ExotelProviderNotConfigured`) — the real `exotel.py` lives in
-  `medai-multitenant`, which this repo doesn't have access to.
-- **OCR is fixture-backed**, not a live model — `ocr/main.py` returns
-  pre-extracted sample scans, matching the PRD's own risk mitigation for
-  judge reproducibility, not a real handwriting-OCR pipeline.
-- **No live phone verification of any of the above** — everything here is
-  tested with mocked HTTP calls; placing a real call still needs a real
-  `CALLE_API_KEY` and a human to answer.
+The database defaults to `data/medai.sqlite3`. Use one clinic per database/process. Backups contain prescription data and need the same access protection as the source database.
+
+## Verify without spending credits
+
+```text
+python verify.py --full
+node --check medai_readback/local_dashboard.js
+node tests/test_ui_state.cjs medai_readback/local_dashboard.js
+```
+
+Verification runs smoke checks first, uses dummy credentials and blocks external sockets. The reviewed revision passes 201 Python tests plus the JavaScript state regression. OCR checks use generated documents, not real patient records. Node is needed only for the JavaScript checks.
+
+## Calls and worker
+
+Live settings are listed in `.env.example` and checked by `/local/readiness`. An accepted provider request is not proof that the phone connected. Dispatch reservations are durable; uncertain responses retain the budget and cannot automatically redial.
+
+```text
+python worker.py --once
+```
+
+The default worker is a dry run. `--live` opts into dispatch and still requires all call settings. Do not enable it until a controlled live test succeeds. All historical `test_readback_*.py` and `src/index.*` examples are now offline-only, so they cannot bypass application dispatch controls.
+
+## Documentation
+
+- [OCR installation and behavior](OCR_SETUP.md)
+- [Local workflow and readiness](LOCAL_READINESS.md)
+- [Production configuration and release gates](PRODUCTION.md)
+- [GitHub/local code review and test evidence](CODE_REVIEW.md)
+- [Reusable contribution](skills/prescription-readback/SKILL.md)
+
+The production entrypoint `production:create_app` excludes legacy demo routes and requires named staff keys, explicit allowed hosts and persistent storage. It does not make the application clinically validated or resolve provider routing.
+
+## Scope and limitations
+
+- OCR drafts use conservative text patterns; no automatic clinical interpretation, invented medicines or inferred doses.
+- Exotel and the original medai-multitenant platform are not included. The Exotel adapter is an explicit unsupported stub.
+- Webhooks use secret per-call URL capabilities, not provider signatures. Keep callback paths out of access logs.
+- `ocr/main.py` and historical demo modules contain labelled offline fixtures. They are not part of the real upload path; demo endpoints are disabled by default.
+- The real phone delivery failure remains unresolved. Successful reminder/caregiver calls and representative handwritten prescriptions still need validation.
+
+This repository extends pre-existing MedAI/CALL-E adapter and test work with the OCR, review, durable workflow and reusable contribution. Historical demo instructions in `DEMO.md` describe the original fixture demonstration and do not establish live success.

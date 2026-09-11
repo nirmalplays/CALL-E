@@ -117,3 +117,12 @@ async def test_non_terminal_event_ignored(db):
         db, "evt_4", {"event": "call.started", "metadata": {"call_id": "x"}}
     )
     assert result["status"] == "ignored"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["call.failed", "call.result_validation_failed"])
+async def test_failed_event_cannot_approve_even_with_confirmed_payload(db, hook, event):
+    call_id = await _seed(db)
+    result = await handle_event(db, "contradiction", _payload(call_id, event=event))
+    assert result["disposition"] == "fallback"
+    assert hook == []

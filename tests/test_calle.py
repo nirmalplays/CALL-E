@@ -6,6 +6,11 @@ import pytest
 from medai_readback.calle import CalleService, _TERMINAL_STATUSES
 
 
+@pytest.fixture(autouse=True)
+def enable_mock_calls(monkeypatch):
+    monkeypatch.setenv("CALLE_ENABLE_LIVE_CALLS", "true")
+
+
 def _mock_response(status: int, payload: dict):
     resp = MagicMock()
     resp.status = status
@@ -49,6 +54,7 @@ async def test_call_posts_recipients_as_array_with_metadata(monkeypatch):
     assert body["recipients"][0]["locale"] == "en-IN"
     assert body["metadata"]["call_id"] == "pat1-2026-09-09-readback"
     assert kwargs["headers"]["Authorization"] == "Bearer calle_test_key"
+    assert kwargs["headers"]["Idempotency-Key"] == "pat1-2026-09-09-readback"
 
 
 @pytest.mark.asyncio
@@ -111,21 +117,15 @@ async def test_call_raises_on_error_status(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_call_id_missing_from_response_falls_back_to_unknown_not_a_crash(monkeypatch):
-    """If the response shape changes again, this should degrade to a
-    traceable 'unknown' id rather than raising — a KeyError here would be
-    worse than a call we can't correlate."""
-    monkeypatch.setenv("CALLE_API_KEY", "calle_test_key")
+async def test_missing_response_id_requires_reconciliation(monkeypatch):
+    monkeypatch.setenv("CALLE_API_KEY", "offline")
     svc = CalleService()
     session = MagicMock()
     session.closed = False
     session.post = MagicMock(return_value=_mock_response(201, {"status": "queued"}))
     svc._session = session
-
-    result = await svc.call(
-        to_number="+919876543210", task="t", result_schema={}, metadata={"call_id": "x"},
-    )
-    assert result["call_sid"] == "unknown"
+    with pytest.raises(RuntimeError, match="reconcile"):
+        await svc.call(to_number="+12025550123", task="t", result_schema={}, metadata={"call_id":"x"})
 
 
 @pytest.mark.asyncio
@@ -207,3 +207,10 @@ async def test_call_locale_and_region_override_env_defaults(monkeypatch):
     recipient = kwargs["json"]["recipients"][0]
     assert recipient["locale"] == "hi-IN"
     assert recipient["region"] == "IN"
+
+
+@pytest.mark.asyncio
+async def test_live_calls_disabled_before_any_network(monkeypatch):
+    monkeypatch.delenv("CALLE_ENABLE_LIVE_CALLS", raising=False)
+    with pytest.raises(ValueError, match="Live calls disabled"):
+        await CalleService().call(to_number="+12025550123",task="t",result_schema={},metadata={"call_id":"x"})

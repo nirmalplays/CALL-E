@@ -134,9 +134,14 @@ task = build_readback_task("Demo Patient", medications)
 
 # ... later, from your webhook or poll loop:
 outcome = decide({"reached_patient": "yes", "overall": "confirmed",
-                   "medications": [{"name_as_read": "Metformin", "status": "confirmed"}]})
+                   "medications": [{"name_as_read": "Metformin", "status": "confirmed"}]}, medications)
 # -> "scheduled"
 ```
+
+Pass `decide(result, expected_medications)` the original pending record retrieved
+by call ID. Missing, extra, duplicated, or unsure medication entries cannot proceed.
+The return value `scheduled` means eligible for downstream handoff; this pure
+function does not schedule anything. The caller must track scheduling success.
 
 ## Known limitations
 

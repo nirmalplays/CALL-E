@@ -45,12 +45,11 @@ def format_medication_line(index: int, med: Dict[str, Any]) -> str:
     if dosage:
         parts.append(dosage)
 
-    tablets = f"{quantity} tablet" if quantity == "1" else f"{quantity} tablets"
     schedule = _schedule_phrase(med.get("schedule", []))
     if quantity:
-        parts.append(f"take {tablets} in the {schedule}")
+        parts.append(f"quantity {quantity}; timing {schedule}")
     else:
-        parts.append(f"take in the {schedule}")
+        parts.append(f"timing {schedule}")
 
     if duration:
         parts.append(f"for {duration}")

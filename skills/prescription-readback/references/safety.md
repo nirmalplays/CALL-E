@@ -72,3 +72,14 @@ misunderstood most of it, and nothing in the output signals that.
 languages you have actually tested, not a list of languages you assume
 the provider supports. Anything not on that list falls back to a human,
 logged. Never place the call anyway "because it's probably fine."
+
+
+## Complete medication reconciliation
+
+Pass the trusted pending medication list to `decide(result, expected_medications)`.
+Every original medication must appear exactly once with status confirmed and no
+correction text. Missing context, malformed entries, unknown names, duplicate
+names, and unsure entries fall back to staff. Duplicate original names are also
+ambiguous until stable medication IDs are introduced. Spoken corrections route
+to review even when the overall result incorrectly claims confirmation.
+Failed and result-validation-failed events cannot approve a regimen.

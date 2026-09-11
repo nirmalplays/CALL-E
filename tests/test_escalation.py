@@ -55,3 +55,13 @@ def test_result_schema_shape():
     props = ESCALATION_RESULT_SCHEMA["properties"]
     assert props["reached_caregiver"]["enum"] == ["yes", "no"]
     assert ESCALATION_RESULT_SCHEMA["required"] == ["reached_caregiver"]
+
+
+def test_escalation_gates_clinical_script_on_identity():
+    task = build_escalation_task("Sunita", "Ravi Kumar", "Metformin", "not_taken")
+    greeting = task.split('First confirm identity. Say: "', 1)[1].split('"', 1)[0]
+    assert "Sunita" in greeting
+    assert "Ravi Kumar" not in greeting
+    assert "Metformin" not in greeting
+    assert "Only after the registered caregiver confirms identity" in task
+    assert "Never leave patient or medication details on voicemail" in task

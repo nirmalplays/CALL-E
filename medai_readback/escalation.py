@@ -39,7 +39,14 @@ def build_escalation_task(
     return f"""You are a friendly voice assistant for MedAI, a medication adherence service.
 You are calling {caregiver}, the registered caregiver for {patient}.
 
-Say: "Hello, this is MedAI calling about {patient}'s medication, {medication_name.strip()}.
+First confirm identity. Say: "Hello, this is MedAI calling for {caregiver}. Am I speaking with them?"
+If the answerer is not the registered caregiver or identity is uncertain, ask them
+to have the caregiver contact the care team and end the call. Do not disclose
+the patient's name, medication, or reason for the call before identity is confirmed.
+If you reach voicemail, leave only: "This is MedAI. Please contact our care team."
+Never leave patient or medication details on voicemail.
+
+Only after the registered caregiver confirms identity, say: "Hello, this is MedAI calling about {patient}'s medication, {medication_name.strip()}.
 We wanted to let you know that {patient} {phrase} this dose.{reason_line} Could you please
 check in with them?"
 

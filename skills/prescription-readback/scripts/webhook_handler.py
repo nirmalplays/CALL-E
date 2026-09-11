@@ -52,7 +52,7 @@ def handle_calle_event(
     if event_id:
         seen_event_ids.add(event_id)
 
-    structured = payload.get("structured_result") or {}
+    structured = (payload.get("structured_result") or {}) if event_type == "call.completed" else {}
     transcript = payload.get("transcript") or []
     disposition = on_result(call_id, structured, transcript)
 

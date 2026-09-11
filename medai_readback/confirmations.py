@@ -92,8 +92,13 @@ async def create_pending_confirmation(
 
 def _extract_corrections(structured: Dict[str, Any]) -> List[Dict[str, str]]:
     out = []
-    for m in structured.get("medications", []) or []:
-        if m.get("status") in ("corrected", "unsure"):
+    medications = structured.get("medications") if isinstance(structured, dict) else None
+    for m in medications if isinstance(medications, list) else []:
+        if not isinstance(m, dict):
+            continue
+        if m.get("status") in ("corrected", "unsure") or (
+            isinstance(m.get("correction_text"), str) and m["correction_text"].strip()
+        ):
             out.append(
                 {
                     "name_as_read": m.get("name_as_read", ""),
@@ -104,24 +109,56 @@ def _extract_corrections(structured: Dict[str, Any]) -> List[Dict[str, str]]:
     return out
 
 
-def decide(structured: Dict[str, Any]) -> str:
-    """Map a structured readback result onto a disposition.
+def decide(structured: Dict[str, Any], expected_medications=None) -> str:
+    """Approve only a complete, unambiguous match to the pending regimen.
 
-    Handing anything downstream requires BOTH that the patient was reached and
-    that the overall outcome is 'confirmed'. Any other combination falls back
-    to human review — including a model that returns 'confirmed' while
-    reporting it never reached the patient.
+    The expected medication list must come from trusted pending state, never
+    from the returned call result. Missing context fails closed. Duplicate
+    names are ambiguous without medication IDs and require staff review.
     """
-    reached = structured.get("reached_patient")
-    overall = structured.get("overall")
-
-    if reached != "yes":
+    if not isinstance(structured, dict) or structured.get("reached_patient") != "yes":
         return "fallback"
-    if overall == "confirmed":
-        return "scheduled"
+    overall = structured.get("overall")
+    medications = structured.get("medications")
     if overall == "corrected":
         return "review"
-    return "fallback"
+    if not isinstance(medications, list) or not medications:
+        return "fallback"
+    if any(not isinstance(m, dict) for m in medications):
+        return "fallback"
+    # A correction takes precedence even when the overall summary contradicts it.
+    if any(m.get("status") == "corrected" or
+           (isinstance(m.get("correction_text"), str) and m["correction_text"].strip())
+           for m in medications):
+        return "review"
+    if overall != "confirmed":
+        return "fallback"
+    if any(m.get("status") != "confirmed" or
+           m.get("correction_text") not in (None, "") for m in medications):
+        return "fallback"
+    if not isinstance(expected_medications, list) or not expected_medications:
+        return "fallback"
+
+    def names(items, key):
+        result = []
+        for item in items:
+            if not isinstance(item, dict):
+                return None
+            name = item.get(key)
+            if not isinstance(name, str) or not name.strip():
+                return None
+            result.append(" ".join(name.split()).casefold())
+        return result
+
+    expected = names(expected_medications, "name")
+    actual = names(medications, "name_as_read")
+    if not expected or not actual:
+        return "fallback"
+    if len(set(expected)) != len(expected) or len(set(actual)) != len(actual):
+        return "fallback"
+    if sorted(expected) != sorted(actual):
+        return "fallback"
+    return "scheduled"
 
 
 async def resolve_confirmation(
@@ -141,7 +178,7 @@ async def resolve_confirmation(
         logger.info("Confirmation {} already resolved as {}", call_id, doc["status"])
         return doc["status"]
 
-    disposition = decide(structured_result)
+    disposition = decide(structured_result, doc.get("medications"))
     corrections = _extract_corrections(structured_result)
 
     await col.update_one(

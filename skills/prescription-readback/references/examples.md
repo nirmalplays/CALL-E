@@ -28,7 +28,7 @@ Phone numbers below are masked. None of these were real calls.
  "medications": [{"name_as_read": "Metformin", "status": "confirmed"}]}
 ```
 
-**Disposition:** `decide(result) == "scheduled"` — hands off downstream.
+**Disposition:** `decide(result, original_medications) == "scheduled"` — permits downstream handoff; scheduling still needs to succeed.
 
 ## Corrected path
 

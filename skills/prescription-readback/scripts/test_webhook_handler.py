@@ -46,3 +46,10 @@ def test_missing_event_id_still_processes_but_cannot_dedupe():
     result = handle_calle_event(None, _payload(), set(), lambda *a: calls.append(a) or "scheduled")
     assert result["status"] == "processed"
     assert len(calls) == 1
+
+
+def test_failure_events_discard_claimed_confirmation():
+    for event in ("call.failed", "call.result_validation_failed"):
+        captured = []
+        handle_calle_event("e", _payload(event=event), set(), lambda cid, result, transcript: captured.append(result))
+        assert captured == [{}]

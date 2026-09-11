@@ -10,7 +10,9 @@ client = TestClient(app_module.app)
 
 
 @pytest.fixture(autouse=True)
-def _reset_store():
+def _reset_store(monkeypatch):
+    monkeypatch.setenv("MEDAI_ENABLE_LEGACY_DEMO", "true")
+    monkeypatch.setenv("MEDAI_OFFLINE_TEST", "true")
     app_module.db._collections.clear()
     yield
     app_module.db._collections.clear()
