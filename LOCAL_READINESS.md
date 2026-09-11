@@ -73,10 +73,34 @@ are atomic in SQLite, so failed transactions remain retryable.
 Public API contract checked without the account key:
 https://docs.heycall-e.com/api-reference/calls
 
+## Reconciliation without a callback
+
+When `MEDAI_PUBLIC_BASE_URL` does not resolve to this server, the terminal
+webhook cannot be delivered and a submitted confirmation stays `pending` with
+`dispatch_state=submitted`. `POST /local/confirmations/{call_id}/reconcile`
+(staff auth) reads that call from the provider and applies the same outcome
+rules as the webhook receiver, so a polled result and a delivered one cannot
+disagree. It places no call and reserves no budget, so it is allowed while
+`CALLE_ENABLE_LIVE_CALLS=false`. Repeating it reports the existing disposition
+and changes nothing; a webhook arriving afterwards is recorded but will not
+re-resolve the record. It requires a stored provider call ID, so a dispatch left
+in `dispatch_state=unknown` still has to be reconciled manually with the
+provider — this endpoint cannot recover a call ID that was never returned.
+
 ## What is not yet verified or integrated
 
-- No successful live phone delivery, conversation, or real webhook has been
-  verified by this change. A local smoke test cannot establish those facts.
+- One authorized live confirmation call completed end to end on 2026-09-11
+  (`call_wO03KFjpByysRKrRHo4abg`): identity check, single-medication readback,
+  patient confirmation, and a structured result matching the schema, resolved
+  into the durable record through the reconcile endpoint. That is one call, to
+  one consenting number, in `en-IN`, with one medication and no correction.
+- Real webhook delivery is still unverified: that call used a placeholder
+  callback URL and was resolved by reconciliation, not by a delivered event.
+  Duplicate-event replay against a real provider event is likewise unverified.
+- Delivery was not reliable. Four authorized attempts to the same number
+  produced one connected conversation; three failed at the carrier before any
+  conversation (`NO ANSWER` twice, `FAILED` once). Treat single-attempt
+  delivery as unproven and expect retries to be necessary.
 - Local image/PDF OCR is installed; see OCR_SETUP.md. Medication fields still require staff entry and review. Submit reviewed extraction through the intake API;
   do not describe this as an implemented image-to-text model.
 - Adherence/escalation dispatch is available through the explicit live worker,
@@ -107,4 +131,6 @@ and name in the patient record. No caregiver language is guessed.
 Use `python verify.py` for smoke checks first, or `python verify.py --full`
 for smoke followed by all regression tests. Both override the account key with
 an offline value and block external sockets. Current regression baseline:
-176 passing tests. No live calls or authenticated provider requests were made.
+209 passing tests. Verification itself makes no live calls or authenticated
+provider requests; the live call recorded above was placed separately, with
+explicit authorization and a budget of one call per attempt.

@@ -154,6 +154,21 @@ async def dispatch(key: str):
     return public(service.record_dispatch(key, result))
 
 
+@router.post('/confirmations/{key}/reconcile', dependencies=[Depends(staff)])
+async def reconcile(key: str):
+    # Reads provider state for a call already submitted; places none, so this
+    # works with live calling disabled and spends no budget.
+    service = workflow()
+    doc = service.get('confirmation', key)
+    if doc['dispatch_state'] != 'submitted' or not doc.get('provider_id'):
+        raise HTTPException(409, 'No submitted call with a known provider ID to reconcile')
+    try:
+        details = await (await CalleService.get_instance()).get_call_details(doc['provider_id'])
+    except Exception:
+        raise HTTPException(502, 'Could not read call state from the provider') from None
+    return service.reconcile(key, details['call_details'])
+
+
 @router.post('/webhook/{token}')
 async def webhook(token: str, request: Request, event_id: str = Header(default='', alias='CALL-E-Event-Id')):
     # CALL-E public SDK documents unsigned hooks. A random per-call URL is an

@@ -66,6 +66,24 @@ def test_auth_and_missing_consent(client):
     assert client.get('/local/confirmations',headers={'Authorization':''}).status_code==401
     assert client.post('/local/intakes',json={'patient_id':'unknown','source_id':'s','medications':[MED]}).status_code==403
 
+def test_reconcile_resolves_when_no_webhook_can_arrive(client,monkeypatch):
+    class Fake:
+        async def call(self,**kw):return {'call_sid':'call_test'}
+        async def get_call_details(self,call_sid):
+            assert call_sid=='call_test'
+            return {'status':'completed','state':'terminal','call_details':{'id':'call_test','status':'completed',
+                'structured_result':{'reached_patient':'yes','overall':'confirmed',
+                    'medications':[{'name_as_read':'Medicine A','status':'confirmed','correction_text':''}]}}}
+    async def provider():return Fake()
+    monkeypatch.setattr(CalleService,'get_instance',provider)
+    monkeypatch.setenv('CALLE_ENABLE_LIVE_CALLS','true')
+    doc=seed(client);key=doc['call_id']
+    assert client.post(f'/local/confirmations/{key}/reconcile').status_code==409
+    assert client.post(f'/local/confirmations/{key}/dispatch').status_code==200
+    assert client.post(f'/local/confirmations/{key}/reconcile').json()['disposition']=='confirmed'
+    assert workflow().get('confirmation',key)['status']=='confirmed'
+    assert workflow().budget()==1
+
 def test_timeout_preserves_budget_no_redial(client,monkeypatch):
     class Fake:
         async def call(self,**kw):raise TimeoutError()

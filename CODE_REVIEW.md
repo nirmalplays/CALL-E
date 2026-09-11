@@ -43,7 +43,7 @@ No remote files, branches or PRs were changed. Local fixes are **not on GitHub**
 
 ## Remaining limits
 
-- The only authorized current connection test failed with provider code 404. No successful end-to-end call, reminder delivery or caregiver delivery was established. No new real calls were made in this review.
+- At the time of this review the only authorized connection test had failed with provider code 404, and no new real calls were made in the review itself. Superseded on 2026-09-11: one authorized confirmation call completed end to end (`call_wO03KFjpByysRKrRHo4abg`). Reminder and caregiver delivery are still unestablished. See README.md and LOCAL_READINESS.md for the current delivery status and its limits.
 - OCR draft extraction is conservative text-pattern extraction, not a validated handwritten prescription understanding model. Unknown fields require staff entry. Representative prescription validation remains necessary.
 - The production entrypoint is single-clinic, uses named bearer tokens, and requires external TLS/storage/service configuration. No deployment was performed.
 - Webhooks use secret per-call URL capabilities, not provider cryptographic signatures. Protect those paths from logs.

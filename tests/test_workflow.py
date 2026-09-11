@@ -26,6 +26,43 @@ def sent(flow):
     flow.record_dispatch(d['call_id'],{'call_sid':'call_test'})
     return d
 
+def details(status='completed', overall='confirmed'):
+    return {'id':'call_test','status':status,
+        'structured_result':{'reached_patient':'yes','overall':overall,'medications':[{'name_as_read':'Medicine A','status':overall,'correction_text':'check dose' if overall=='corrected' else ''}]}}
+
+def test_reconcile_resolves_a_call_with_no_webhook(flow):
+    d=sent(flow)
+    assert flow.reconcile(d['call_id'],details())['disposition']=='confirmed'
+    assert flow.get('confirmation',d['call_id'])['approved_medications']==[MED]
+
+def test_reconcile_is_idempotent_and_a_late_webhook_cannot_re_resolve(flow):
+    d=sent(flow)
+    flow.reconcile(d['call_id'],details())
+    assert flow.reconcile(d['call_id'],details(overall='corrected'))['disposition']=='confirmed'
+    assert flow.event(d['webhook_token'],'evt1',payload(d,'corrected'))['disposition']=='confirmed'
+
+@pytest.mark.parametrize('status',['failed','canceled'])
+def test_reconcile_of_a_failed_call_cannot_approve(flow,status):
+    d=sent(flow)
+    assert flow.reconcile(d['call_id'],details(status=status))['disposition']=='fallback'
+    assert 'approved_medications' not in flow.get('confirmation',d['call_id'])
+
+def test_reconcile_leaves_an_active_call_pending(flow):
+    d=sent(flow)
+    assert flow.reconcile(d['call_id'],details(status='queued'))=={'status':'active','call_status':'queued'}
+    assert flow.get('confirmation',d['call_id'])['status']=='pending'
+
+def test_reconcile_rejects_another_calls_result(flow):
+    d=sent(flow)
+    with pytest.raises(WorkflowError):flow.reconcile(d['call_id'],dict(details(),id='call_other'))
+    assert flow.get('confirmation',d['call_id'])['status']=='pending'
+
+def test_reconcile_requires_a_submitted_call_with_a_provider_id(flow):
+    d=intake(flow)
+    with pytest.raises(WorkflowError):flow.reconcile(d['call_id'],details())
+    flow.reserve_call(d['call_id'],1,{'+12025550123'});flow.record_dispatch(d['call_id'])
+    with pytest.raises(WorkflowError):flow.reconcile(d['call_id'],details())
+
 def test_restart_preserves_records_and_budget(flow):
     d=sent(flow)
     other=Workflow(flow.path,'test')

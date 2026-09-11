@@ -10,6 +10,9 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from medai_readback.confirmations import decide
 
+# Provider call states that will not change again, so a polled result is final.
+TERMINAL_CALL_STATUSES = frozenset({'completed', 'failed', 'canceled'})
+
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -231,6 +234,56 @@ class Workflow:
             self._put(conn, 'confirmation', call_id, doc)
             return doc
 
+    def _apply_outcome(self, conn, key, doc, data, completed):
+        """Route one terminal provider result onto a pending confirmation.
+
+        Shared by the webhook and reconciliation paths so a polled outcome can
+        never disagree with a delivered one. `completed` must be True only for a
+        call the provider reports as genuinely completed; any other terminal
+        state discards the structured result and fails closed.
+        """
+        structured = data.get('structured_result') if completed else {}
+        disposition = decide(structured, doc['medications'])
+        try:
+            self._consent(conn, doc['patient_id'])
+        except WorkflowError:
+            disposition = 'fallback'
+            doc['fallback_reason'] = 'consent_withdrawn'
+        doc['status'] = 'confirmed' if disposition == 'scheduled' else disposition
+        doc['provider_failure'] = {k: data.get(k) for k in ('failure_code', 'failure_message')}
+        doc['provider_attempts'] = [{'failure_code': a.get('failure_code'), 'failure_message': a.get('failure_message'), 'provider_call_id': a.get('provider_call_id')} for r in data.get('recipients', []) if isinstance(r, dict) for a in (r.get('attempts') if isinstance(r.get('attempts'), list) else []) if isinstance(a, dict)] if isinstance(data.get('recipients'), list) else []
+        doc.update(structured_result=structured if isinstance(structured, dict) else {}, resolved_at=now())
+        if doc['status'] == 'confirmed':
+            doc['approved_medications'] = doc['medications']
+            doc['approval'] = {'source': 'patient_call', 'at': now()}
+        self._put(conn, 'confirmation', key, doc)
+
+    def reconcile(self, key, details):
+        """Resolve a submitted confirmation from the provider's own call record.
+
+        For deployments with no public callback URL, where the terminal webhook
+        can never arrive. The caller fetches `details` (the provider call
+        object); this module stays free of network calls. Reconciling an
+        already-resolved record reports the existing disposition and changes
+        nothing, so it is safe to repeat and safe to race with a late webhook.
+        """
+        if not isinstance(details, dict):
+            raise WorkflowError('Provider call details required', 422)
+        with self.transaction() as conn:
+            doc = self._get(conn, 'confirmation', key)
+            if not doc:
+                raise WorkflowError('Record not found', 404)
+            if doc['dispatch_state'] != 'submitted' or not doc.get('provider_id'):
+                raise WorkflowError('No submitted call with a known provider ID to reconcile')
+            if details.get('id') != doc['provider_id']:
+                raise WorkflowError('Provider call ID mismatch', 403)
+            status = details.get('status')
+            if status not in TERMINAL_CALL_STATUSES:
+                return {'status': 'active', 'call_status': status}
+            if doc['status'] == 'pending':
+                self._apply_outcome(conn, key, doc, details, status == 'completed')
+            return {'status': 'processed', 'call_status': status, 'disposition': doc['status']}
+
     def event(self, token, event_id, payload):
         if not isinstance(payload, dict) or not event_id:
             raise WorkflowError('Event ID and JSON object required', 422)
@@ -259,21 +312,8 @@ class Workflow:
             if conn.execute('SELECT 1 FROM events WHERE id=?', (event_id,)).fetchone():
                 return {'status': 'duplicate'}
             if doc['status'] == 'pending':
-                structured = data.get('structured_result') if event == 'call.completed' and data.get('status') == 'completed' else {}
-                disposition = decide(structured, doc['medications'])
-                try:
-                    self._consent(conn, doc['patient_id'])
-                except WorkflowError:
-                    disposition = 'fallback'
-                    doc['fallback_reason'] = 'consent_withdrawn'
-                doc['status'] = 'confirmed' if disposition == 'scheduled' else disposition
-                doc['provider_failure'] = {k: data.get(k) for k in ('failure_code', 'failure_message')}
-                doc['provider_attempts'] = [{'failure_code': a.get('failure_code'), 'failure_message': a.get('failure_message'), 'provider_call_id': a.get('provider_call_id')} for r in data.get('recipients', []) if isinstance(r, dict) for a in (r.get('attempts') if isinstance(r.get('attempts'), list) else []) if isinstance(a, dict)] if isinstance(data.get('recipients'), list) else []
-                doc.update(structured_result=structured if isinstance(structured, dict) else {}, resolved_at=now())
-                if doc['status'] == 'confirmed':
-                    doc['approved_medications'] = doc['medications']
-                    doc['approval'] = {'source': 'patient_call', 'at': now()}
-                self._put(conn, 'confirmation', key, doc)
+                self._apply_outcome(conn, key, doc, data,
+                                    event == 'call.completed' and data.get('status') == 'completed')
             conn.execute('INSERT INTO events VALUES (?,?)', (event_id, key))
             return {'status': 'processed', 'disposition': doc['status']}
 
