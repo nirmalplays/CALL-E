@@ -123,6 +123,10 @@ class Workflow:
             conn.execute('CREATE TABLE IF NOT EXISTS budget (id INTEGER PRIMARY KEY CHECK(id=1), used INTEGER NOT NULL)')
             conn.execute('INSERT OR IGNORE INTO budget VALUES (1,0)')
             conn.execute('CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY, at TEXT NOT NULL, actor TEXT NOT NULL, tenant TEXT NOT NULL, kind TEXT NOT NULL, record_id TEXT NOT NULL, digest TEXT NOT NULL)')
+            # Operational state: the working call limit and the worker heartbeat.
+            # Deliberately outside `records` so a 30s heartbeat cannot flood the
+            # audit trail, and outside `budget` so `used` keeps its exact meaning.
+            conn.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, at TEXT NOT NULL)')
 
     @contextmanager
     def transaction(self):
@@ -361,6 +365,45 @@ class Workflow:
     def budget(self):
         with self.transaction() as conn:
             return conn.execute('SELECT used FROM budget WHERE id=1').fetchone()[0]
+
+    def get_state(self, key, default=None):
+        with self.transaction() as conn:
+            row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+        return row[0] if row else default
+
+    def set_state(self, key, value):
+        with self.transaction() as conn:
+            conn.execute('INSERT INTO settings VALUES (?,?,?) ON CONFLICT(key) '
+                         'DO UPDATE SET value=excluded.value, at=excluded.at', (key, str(value), now()))
+        return value
+
+    def call_limit(self, ceiling):
+        """Working call limit: the dashboard's value, never above the env ceiling.
+
+        `CALLE_CALL_BUDGET` is the hard maximum an operator sets on the host. The
+        dashboard may lower the working limit below it but can never raise it, so
+        a browser session holding a staff token cannot widen the real cap.
+        """
+        raw = self.get_state('call_limit')
+        if raw is None:
+            return ceiling
+        try:
+            return max(0, min(int(raw), ceiling))
+        except (TypeError, ValueError):
+            return ceiling
+
+    def set_call_limit(self, value, ceiling):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            raise WorkflowError('Call limit must be a whole number', 422) from None
+        if value < 0:
+            raise WorkflowError('Call limit cannot be negative', 422)
+        if value > ceiling:
+            raise WorkflowError(f'CALLE_CALL_BUDGET caps the working limit at {ceiling}. '
+                                f'Raise it in .env and restart the server to go higher.', 409)
+        self.set_state('call_limit', value)
+        return value
 
     def due_jobs(self):
         return [j for j in self.list('job') if j['status']=='pending' and j['due_at']<=now()]

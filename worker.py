@@ -7,15 +7,25 @@ python worker.py --live          # run worker; live settings still required
 import argparse
 import asyncio
 import json
+import os
 import env_config
 from medai_readback.local_api import workflow, dispatch_job
 from medai_readback.calle import CalleService
 from medai_readback.workflow import WorkflowError
 
+def heartbeat(live):
+    # The dashboard has no other way to know this process exists.
+    from datetime import datetime, timezone
+    workflow().set_state('worker_heartbeat', json.dumps({
+        'at': datetime.now(timezone.utc).isoformat(),
+        'mode': 'live' if live else 'dry-run', 'pid': os.getpid()}))
+
+
 async def run(once=False,live=False):
     try:
         while True:
             jobs=workflow().due_jobs()
+            heartbeat(live)
             print(json.dumps({'due_jobs':[j['job_id'] for j in jobs],'mode':'live' if live else 'dry-run'}),flush=True)
             if live:
                 for job in jobs:

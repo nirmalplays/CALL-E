@@ -1,8 +1,11 @@
 """Authenticated local API, explicit previews and budgeted outbound dispatch."""
 import os
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -56,9 +59,10 @@ def live_settings():
     if os.getenv('CALLE_ENABLE_LIVE_CALLS') != 'true':
         errors.append('Live calling disabled')
     try:
-        limit = int(os.getenv('CALLE_CALL_BUDGET', '0'))
+        ceiling = int(os.getenv('CALLE_CALL_BUDGET', '0'))
     except ValueError:
-        limit = 0
+        ceiling = 0
+    limit = workflow().call_limit(ceiling)
     if limit < 1:
         errors.append('No call budget configured')
     phones = {p.strip() for p in os.getenv('CALLE_ALLOWED_PHONES', '').split(',') if p.strip()}
@@ -80,8 +84,72 @@ def readiness():
     errors, limit, _, _ = live_settings()
     return {'configured_for_live': not errors, 'blockers': errors,
             'local_budget': limit, 'reserved_calls': workflow().budget(),
-            'delivery_verified': False,
+            'delivery_verified': False, 'worker': worker_state(),
             'note': 'Configuration is not proof of phone delivery. No API request is made by this check.'}
+
+
+def budget_ceiling():
+    try:
+        return int(os.getenv('CALLE_CALL_BUDGET', '0'))
+    except ValueError:
+        return 0
+
+
+def worker_state():
+    """Last heartbeat written by worker.py, with its age in seconds.
+
+    The worker is a separate process; absence of a recent heartbeat is the only
+    honest signal that reminders are not being dialled automatically.
+    """
+    import json as _json
+    raw = workflow().get_state('worker_heartbeat')
+    if not raw:
+        return {'running': False, 'seen_at': None, 'age_seconds': None, 'mode': None}
+    try:
+        beat = _json.loads(raw)
+        seen = datetime.fromisoformat(beat['at'])
+    except (ValueError, KeyError, TypeError):
+        return {'running': False, 'seen_at': None, 'age_seconds': None, 'mode': None}
+    age = (datetime.now(timezone.utc) - seen).total_seconds()
+    # The worker beats every 30s; 90s of silence means it is not running.
+    return {'running': age < 90, 'seen_at': beat['at'], 'age_seconds': int(age), 'mode': beat.get('mode')}
+
+
+@router.get('/config', dependencies=[Depends(staff)])
+def get_config():
+    """Non-secret operational configuration. Never returns keys, tokens or phone numbers."""
+    errors, limit, phones, url = live_settings()
+    ceiling = budget_ceiling()
+    host = urlparse(url).hostname if url else None
+    return {
+        'calling': {
+            'enabled': os.getenv('CALLE_ENABLE_LIVE_CALLS') == 'true',
+            'working_limit': limit, 'ceiling': ceiling,
+            'reserved': workflow().budget(),
+            'allowed_phone_count': len(phones),
+            'verified_locales': sorted(locales()),
+            'callback_host': host,
+            'provider_host': urlparse(os.getenv('CALLE_BASE_URL', 'https://api.heycall-e.com')).hostname,
+        },
+        'automation': worker_state(),
+        'storage': {'tenant': workflow().tenant,
+                    'database': Path(workflow().path).name,
+                    'scheduled_jobs': len(workflow().list('job')),
+                    'due_jobs': len(workflow().due_jobs())},
+        'auth': {'named_staff_keys': bool(os.getenv('MEDAI_STAFF_KEYS')),
+                 'legacy_demo_enabled': os.getenv('MEDAI_ENABLE_LEGACY_DEMO') == 'true'},
+        'blockers': errors,
+    }
+
+
+class BudgetUpdate(BaseModel):
+    limit: int = Field(ge=0, le=10_000)
+
+
+@router.post('/config/budget', dependencies=[Depends(staff)])
+def set_budget(body: BudgetUpdate):
+    value = workflow().set_call_limit(body.limit, budget_ceiling())
+    return {'working_limit': value, 'ceiling': budget_ceiling(), 'reserved': workflow().budget()}
 
 
 @router.put('/patients', dependencies=[Depends(staff)])
@@ -125,7 +193,7 @@ def preview(key: str):
     task = build_readback_task(doc['patient_name'], doc['medications']) if len(doc['medications']) <= 6 else None
     return {'call_id': key, 'task': task, 'status': doc['status'],
             'result_schema': READBACK_RESULT_SCHEMA, 'language': doc['language'],
-            'live_blockers': errors, 'calls_placed': 0}
+            'live_blockers': errors, 'calls_placed': workflow().budget()}
 
 
 @router.post('/confirmations/{key}/dispatch', dependencies=[Depends(staff)])
@@ -164,9 +232,18 @@ async def reconcile(key: str):
         raise HTTPException(409, 'No submitted call with a known provider ID to reconcile')
     try:
         details = await (await CalleService.get_instance()).get_call_details(doc['provider_id'])
-    except Exception:
-        raise HTTPException(502, 'Could not read call state from the provider') from None
-    return service.reconcile(key, details['call_details'])
+    except Exception as exc:
+        unknown = '404' in str(exc) or 'not_found' in str(exc)
+        raise HTTPException(502, 'The provider does not recognise this call ID. It was placed under a '
+                                 'different API key or account, or has aged out of the provider\'s retention.'
+                            if unknown else 'Could not read call state from the provider') from None
+    outcome = service.reconcile(key, details['call_details'])
+    if outcome.get('status') == 'active':
+        body = details['call_details']
+        recipients = body.get('recipients') if isinstance(body.get('recipients'), list) else []
+        attempts = sum(len(r.get('attempts') or []) for r in recipients if isinstance(r, dict))
+        outcome = {**outcome, 'dial_attempts': attempts, 'submitted_at': body.get('created_at')}
+    return outcome
 
 
 @router.post('/webhook/{token}')
