@@ -32,8 +32,9 @@ Open `http://127.0.0.1:8000/local/dashboard` and unlock with the staff token. Th
 2. Upload PNG, JPEG, WebP or PDF. OCR runs locally, without sending documents to an external API.
 3. Load editable draft medicine fields derived from the recognized text. Missing fields stay blank. Compare every value with the original; handwriting accuracy is not validated.
 4. Save reviewed medication data. Original files and extracted text remain available through authenticated saved-scan endpoints. No fixture substitutes for an uploaded file.
-5. Preview the confirmation call. Live dispatch requires explicit configuration, an allowed number, verified locale, HTTPS callback and remaining local budget.
-6. Call corrections go to staff review. Approved regimens can receive explicitly scheduled reminder jobs. Creating a schedule does not place a call; the worker must be explicitly enabled.
+5. Preview the confirmation call. Live dispatch requires explicit configuration, an allowed number, verified locale, HTTPS callback and remaining local budget. The dashboard's Call readiness panel names each missing setting and the environment variable that supplies it, and shows how much of the local budget is reserved.
+6. Call corrections go to staff review. Approved regimens can receive explicitly scheduled reminder jobs. Creating a schedule does not place a call; a reminder is either dialled by hand from the Reminders view once it falls due, or by the worker, which must be explicitly enabled.
+7. A submitted call stays unresolved until its outcome is known. Reopen the prescription and use **Check outcome with provider** to read the outcome back; a dispatch the provider never confirmed is marked *Outcome unknown*, keeps its reserved budget, and is never redialled automatically.
 
 The database defaults to `data/medai.sqlite3`. Use one clinic per database/process. Backups contain prescription data and need the same access protection as the source database.
 
@@ -45,13 +46,15 @@ node --check medai_readback/local_dashboard.js
 node tests/test_ui_state.cjs medai_readback/local_dashboard.js
 ```
 
-Verification runs smoke checks first, uses dummy credentials and blocks external sockets. The reviewed revision passes 209 Python tests plus the JavaScript state regression. OCR checks use generated documents, not real patient records. Node is needed only for the JavaScript checks.
+`tests/test_dashboard_calls.cjs` covers the call-placement paths (readiness, dispatch gating, reconcile, reminder dispatch) and runs under pytest via `tests/test_dashboard_calls.py`, which also pins the dashboard's setup guidance to the blocker strings `live_settings()` emits.
+
+Verification runs smoke checks first, uses dummy credentials and blocks external sockets. The reviewed revision passes 210 Python tests plus the JavaScript state regression. OCR checks use generated documents, not real patient records. Node is needed only for the JavaScript checks.
 
 ## Calls and worker
 
 Live settings are listed in `.env.example` and checked by `/local/readiness`. An accepted provider request is not proof that the phone connected. Dispatch reservations are durable; uncertain responses retain the budget and cannot automatically redial.
 
-Without a public HTTPS callback the terminal webhook can never arrive, so a submitted call would stay unresolved. `POST /local/confirmations/{call_id}/reconcile` reads that call's state from the provider and applies the same outcome rules as the webhook, resolving the record. It places no call, spends no budget, works with live calling disabled, and is safe to repeat or to race with a late webhook. It needs a provider call ID, so it cannot resolve a dispatch whose outcome was never returned.
+Without a public HTTPS callback the terminal webhook can never arrive, so a submitted call would stay unresolved. `POST /local/confirmations/{call_id}/reconcile` reads that call's state from the provider and applies the same outcome rules as the webhook, resolving the record. It places no call, spends no budget, works with live calling disabled, and is safe to repeat or to race with a late webhook. It needs a provider call ID, so it cannot resolve a dispatch whose outcome was never returned. The dashboard exposes this as **Check outcome with provider** on any prescription awaiting an outcome.
 
 ```text
 python worker.py --once
